@@ -1,102 +1,119 @@
-// Force dynamic rendering to check session on every request
+// app/dashboard/page.tsx
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-import { auth0 } from "@/lib/auth0";
-import { supabaseAWithToken } from "@/lib/supabaseA";
-import { supabaseBWithToken } from "@/lib/supabaseB";
-import { Card, CardHeader } from "@/components/Card";
-import { DataTable } from "@/components/DataTable";
-import { Badge } from "@/components/Badge";
-import Link from "next/link";
-import { Button } from "@/components/Button";
+import { auth0 } from '@/lib/auth0';
+import { redirect } from 'next/navigation';
+import { supabaseAWithToken } from '@/lib/supabaseA';
+import { supabaseBWithToken } from '@/lib/supabaseB';
+import { supabaseBWithToken as supabaseCWithToken } from '@/lib/supabaseC';
+import { Card, CardHeader } from '@/components/Card';
+import { DataTable } from '@/components/DataTable';
+import { Badge } from '@/components/Badge';
+import { Button } from '@/components/Button';
+import Link from 'next/link';
+import type { Membership } from '@/lib/sso-check';
 
-interface Lesson {
+interface ResourceItem {
   id: number;
-  member_state_id: string;
-  grade_level: number;
   title: string;
+  resource_type: string;
+  grade: string;
+  school_id: string;
+  member_state_id: string;
+  created_at: string;
 }
 
-interface Progress {
+interface CourseItem {
   id: number;
-  user_sub: string;
+  title: string;
+  grade: string;
+  school_id: string;
   member_state_id: string;
-  lesson_id: number;
-  status: string;
-  updated_at: string;
+  created_at: string;
 }
 
 export default async function Dashboard() {
-  // Get session server-side
   const session = await auth0.getSession();
 
-  if (!session) {
-    return (
-      <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-6">
-        <Card className="text-center max-w-md">
-          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h1 className="text-xl font-bold text-slate-800 mb-2">
-            Access Required
-          </h1>
-          <p className="text-slate-600 mb-6">
-            Please login first to access the dashboard.
-          </p>
-          <Button href="/auth/login" variant="primary">
-            Login
-          </Button>
-        </Card>
-      </div>
-    );
+  if (!session?.user) {
+    redirect('/auth/login');
   }
 
   const user = session.user;
-
-  // Get access token server-side
   const { token: accessToken } = await auth0.getAccessToken();
 
-  // Call Supabase A directly
-  const supabaseA = supabaseAWithToken(accessToken);
-  const { data: lessons } = await supabaseA
-    .from("lessons")
-    .select("id, member_state_id, grade_level, title")
-    .order("id", { ascending: true });
+  // Get membership from Supabase A using service role key
+  const { supabaseAdminA } = await import('@/lib/supabaseAdmin');
+  const supabaseAdmin = supabaseAdminA();
+  const { data: membership } = await supabaseAdmin
+    .schema('authz')
+    .from('memberships')
+    .select('*')
+    .eq('auth0_sub', user.sub)
+    .single<Membership>();
 
-  // Call Supabase B directly
-  const supabaseB = supabaseBWithToken(accessToken);
-  const { data: progress } = await supabaseB
-    .from("progress")
-    .select("id, user_sub, member_state_id, lesson_id, status, updated_at")
-    .order("updated_at", { ascending: false });
+  // If no approved membership, redirect to request access
+  if (!membership || membership.status !== 'approved') {
+    redirect('/request-access');
+  }
 
-  // Define columns for lessons table
-  const lessonColumns = [
+  const isTeacher = membership.role === 'teacher' || membership.role === 'admin';
+
+  // Fetch role-appropriate data
+  let resources: ResourceItem[] = [];
+  let curriculum: CourseItem[] = [];
+
+  if (isTeacher) {
+    // Supabase C — curriculum.courses
+    const supabaseC = supabaseCWithToken(accessToken);
+    const { data } = await supabaseC
+      .schema('curriculum')
+      .from('courses')
+      .select('id, title, grade, school_id, member_state_id, created_at')
+      .order('id', { ascending: true });
+    curriculum = data ?? [];
+  } else {
+    // Supabase B — resources.items
+    const supabaseB = supabaseBWithToken(accessToken);
+    const { data } = await supabaseB
+      .schema('resources')
+      .from('items')
+      .select('id, title, resource_type, grade, school_id, member_state_id, created_at')
+      .order('id', { ascending: true });
+    resources = data ?? [];
+  }
+
+  const resourceColumns = [
+    { key: 'id', header: 'ID', className: 'w-16' },
+    { key: 'title', header: 'Title' },
+    { key: 'resource_type', header: 'Type' },
+    { key: 'grade', header: 'Grade' },
+    { key: 'school_id', header: 'School' },
+    { key: 'member_state_id', header: 'State' },
     {
-      key: "id",
-      header: "ID",
-      className: "w-16",
+      key: 'created_at',
+      header: 'Added',
+      render: (item: ResourceItem) => new Date(item.created_at).toLocaleDateString(),
+    },
+  ];
+
+  const curriculumColumns = [
+    { key: 'id', header: 'ID', className: 'w-16' },
+    { key: 'title', header: 'Course' },
+    { key: 'grade', header: 'Grade' },
+    { key: 'school_id', header: 'School' },
+    { key: 'member_state_id', header: 'State' },
+    {
+      key: 'created_at',
+      header: 'Added',
+      render: (item: CourseItem) => new Date(item.created_at).toLocaleDateString(),
     },
     {
-      key: "member_state_id",
-      header: "Member State",
-    },
-    {
-      key: "grade_level",
-      header: "Grade",
-    },
-    {
-      key: "title",
-      header: "Title",
-    },
-    {
-      key: "actions",
-      header: "Actions",
-      className: "w-24",
-      render: (item: Lesson) => (
+      key: 'actions',
+      header: '',
+      render: () => (
         <Button variant="outline" size="sm">
           View
         </Button>
@@ -104,98 +121,87 @@ export default async function Dashboard() {
     },
   ];
 
-  // Define columns for progress table
-  const progressColumns = [
-    {
-      key: "id",
-      header: "ID",
-      className: "w-16",
-    },
-    {
-      key: "user_sub",
-      header: "User",
-      render: (item: Progress) => (
-        <span className="font-mono text-xs">
-          {item.user_sub.substring(0, 8)}...
-        </span>
-      ),
-    },
-    {
-      key: "member_state_id",
-      header: "Member State",
-    },
-    {
-      key: "lesson_id",
-      header: "Lesson",
-    },
-    {
-      key: "status",
-      header: "Status",
-      render: (item: Progress) => {
-        const variant = item.status === "completed" ? "success" : "warning";
-        return <Badge variant={variant}>{item.status}</Badge>;
-      },
-    },
-    {
-      key: "updated_at",
-      header: "Updated",
-      render: (item: Progress) => {
-        const date = new Date(item.updated_at);
-        return date.toLocaleDateString();
-      },
-    },
-  ];
-
   return (
     <div className="min-h-[calc(100vh-4rem)] p-6">
       <div className="max-w-7xl mx-auto">
         {/* Page Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-800 mb-2">Dashboard</h1>
-          <p className="text-slate-600">
-            Welcome back, {user.name || user.email?.split('@')[0] || 'User'}
-          </p>
+        <div className="mb-8 flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800 mb-1">Dashboard</h1>
+            <p className="text-slate-600">
+              Welcome back, {user.name || user.email?.split('@')[0] || 'User'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant={isTeacher ? 'success' : 'info'} className="text-sm px-3 py-1">
+              {membership.role.charAt(0).toUpperCase() + membership.role.slice(1)}
+            </Badge>
+            {membership.member_state_id && (
+              <Badge variant="default">{membership.member_state_id}</Badge>
+            )}
+          </div>
         </div>
 
-        {/* Project A: Lessons */}
+        {/* Role-based content */}
         <Card className="mb-6">
           <CardHeader
-            title="Project A: Lessons"
-            subtitle="Lessons data from Supabase Project A"
+            title={isTeacher ? 'Curriculum' : 'Resources'}
+            subtitle={
+              isTeacher
+                ? 'Lesson plans and curriculum from Supabase C'
+                : 'Learning resources from Supabase B'
+            }
             icon={
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-              </svg>
+              isTeacher ? (
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+              )
             }
           />
-          <DataTable<Lesson>
-            data={lessons || []}
-            columns={lessonColumns}
-            emptyMessage="No lessons found"
-          />
+          {isTeacher ? (
+            <DataTable<CourseItem>
+              data={curriculum}
+              columns={curriculumColumns}
+              emptyMessage="No curriculum courses found"
+            />
+          ) : (
+            <DataTable<ResourceItem>
+              data={resources}
+              columns={resourceColumns}
+              emptyMessage="No resources found"
+            />
+          )}
         </Card>
 
-        {/* Project B: Progress */}
-        <Card>
-          <CardHeader
-            title="Project B: Progress"
-            subtitle="User progress data from Supabase Project B"
-            icon={
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-            }
-          />
-          <DataTable<Progress>
-            data={progress || []}
-            columns={progressColumns}
-            emptyMessage="No progress data found"
-          />
-        </Card>
+        {/* Admin link */}
+        {membership.role === 'admin' && (
+          <div className="mb-6">
+            <Link href="/sso-control">
+              <Card className="hover:shadow-lg transition-shadow cursor-pointer border border-blue-100">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-slate-800">SSO Control Panel</h3>
+                    <p className="text-sm text-slate-500">Manage user memberships and access requests</p>
+                  </div>
+                </div>
+              </Card>
+            </Link>
+          </div>
+        )}
 
-        {/* Back to Home */}
-        <div className="mt-6 text-center">
-          <Link href="/" className="text-sm text-slate-600 hover:text-slate-800">
+        <div className="text-center">
+          <Link href="/" className="text-sm text-slate-500 hover:text-slate-800">
             ← Back to Home
           </Link>
         </div>
