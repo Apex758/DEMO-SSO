@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { auth0 } from "./lib/auth0";
 
 export async function middleware(request: NextRequest) {
+  // Use Auth0's built-in middleware for session handling
   return await auth0.middleware(request);
 }
 

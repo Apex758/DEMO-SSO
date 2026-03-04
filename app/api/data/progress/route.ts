@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import { auth0 } from "@/lib/auth0";
 import { supabaseBWithToken } from "@/lib/supabaseB";
+import { validateTokenVersion } from "@/lib/session-validation";
 
 export async function GET(req: Request) {
   try {
+    // First validate the token version to check if session is still valid
+    const validation = await validateTokenVersion();
+    
+    if (!validation.valid) {
+      return NextResponse.json({ error: "Session invalidated. Please log in again." }, { status: 401 });
+    }
+    
     const { token: accessToken } = await auth0.getAccessToken();
 
     if (!accessToken) {
