@@ -21,7 +21,7 @@ interface Membership {
   created_at: string;
 }
 
-type Tab = 'approved' | 'pending';
+type Tab = 'approved' | 'pending' | 'suspended' | 'denied';
 
 const roleColors: Record<string, 'info' | 'success' | 'warning'> = {
   student: 'info',
@@ -40,7 +40,8 @@ export default function SSOControlPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sso/memberships?status=${activeTab === 'approved' ? 'approved' : 'pending'}`);
+      const statusParam = activeTab === 'approved' ? 'approved' : activeTab === 'pending' ? 'pending' : activeTab === 'suspended' ? 'suspended' : 'denied';
+      const res = await fetch(`/api/sso/memberships?status=${statusParam}`);
       if (!res.ok) throw new Error('Failed to fetch memberships');
       const data = await res.json();
       setMemberships(data.memberships ?? []);
@@ -56,7 +57,7 @@ export default function SSOControlPage() {
   }, [fetchMemberships]);
 
 
-  const handleAction = async (id: string, status: 'approved' | 'denied', role?: string) => {
+  const handleAction = async (id: string, status: 'approved' | 'denied' | 'suspended', role?: string) => {
     setActionLoading(id);
     try {
       const res = await fetch(`/api/sso/memberships/${encodeURIComponent(id)}`, {
@@ -140,6 +141,65 @@ export default function SSOControlPage() {
     },
   ];
 
+  const suspendedColumns = [
+    { key: 'full_name', header: 'Name' },
+    { key: 'email', header: 'Email' },
+    {
+      key: 'role',
+      header: 'Role',
+      render: (item: Membership) => (
+        <Badge variant={roleColors[item.role] ?? 'default'}>{item.role}</Badge>
+      ),
+    },
+    { key: 'school_id', header: 'School' },
+    { key: 'member_state_id', header: 'State' },
+    { key: 'grades_csv', header: 'Grades' },
+    {
+      key: 'created_at',
+      header: 'Suspended',
+      render: (item: Membership) => new Date(item.created_at).toLocaleDateString(),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (item: Membership) => (
+        <div className="flex gap-2">
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={actionLoading === item.auth0_sub}
+            onClick={() => handleAction(item.auth0_sub, 'approved')}
+          >
+            Reactivate
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  const deniedColumns = [
+    { key: 'full_name', header: 'Name' },
+    { key: 'email', header: 'Email' },
+    {
+      key: 'created_at',
+      header: 'Denied',
+      render: (item: Membership) => new Date(item.created_at).toLocaleDateString(),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (item: Membership) => (
+        <div className="flex gap-2">
+          <ApproveWithRole
+            id={item.auth0_sub}
+            loading={actionLoading === item.auth0_sub}
+            onApprove={(role) => handleAction(item.auth0_sub, 'approved', role)}
+          />
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="min-h-[calc(100vh-4rem)] p-6">
       <div className="max-w-7xl mx-auto">
@@ -151,7 +211,7 @@ export default function SSOControlPage() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-6 bg-slate-100 rounded-lg p-1 w-fit">
-          {(['approved', 'pending'] as Tab[]).map((tab) => (
+          {(['approved', 'pending', 'suspended', 'denied'] as Tab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -161,7 +221,7 @@ export default function SSOControlPage() {
                   : 'text-slate-600 hover:text-slate-800'
               }`}
             >
-              {tab === 'approved' ? 'Approved Users' : 'Pending Requests'}
+              {tab === 'approved' ? 'Approved Users' : tab === 'pending' ? 'Pending Requests' : tab === 'suspended' ? 'Suspended Users' : 'Denied Users'}
             </button>
           ))}
         </div>
@@ -169,11 +229,15 @@ export default function SSOControlPage() {
         {/* Content */}
         <Card padding="none">
           <CardHeader
-            title={activeTab === 'approved' ? 'Approved Users' : 'Pending Requests'}
+            title={activeTab === 'approved' ? 'Approved Users' : activeTab === 'pending' ? 'Pending Requests' : activeTab === 'suspended' ? 'Suspended Users' : 'Denied Users'}
             subtitle={
               activeTab === 'approved'
                 ? 'All users with approved access'
-                : 'Users awaiting access approval'
+                : activeTab === 'pending'
+                ? 'Users awaiting access approval'
+                : activeTab === 'suspended'
+                ? 'Users with suspended access'
+                : 'Users with denied access'
             }
             icon={
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -199,9 +263,9 @@ export default function SSOControlPage() {
           ) : (
             <DataTable<Membership>
               data={memberships}
-              columns={activeTab === 'approved' ? approvedColumns : pendingColumns}
+              columns={activeTab === 'approved' ? approvedColumns : activeTab === 'pending' ? pendingColumns : activeTab === 'suspended' ? suspendedColumns : deniedColumns}
               emptyMessage={
-                activeTab === 'approved' ? 'No approved users yet' : 'No pending requests'
+                activeTab === 'approved' ? 'No approved users yet' : activeTab === 'pending' ? 'No pending requests' : activeTab === 'suspended' ? 'No suspended users' : 'No denied users'
               }
             />
           )}
