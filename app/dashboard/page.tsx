@@ -190,11 +190,6 @@ export default async function Dashboard() {
           </div>
         )}
 
-        <div className="text-center">
-          <Link href="/" className="text-sm text-slate-500 hover:text-slate-800">
-            ← Back to Home
-          </Link>
-        </div>
       </div>
     </div>
   );
