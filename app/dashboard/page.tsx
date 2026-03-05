@@ -5,9 +5,7 @@ export const revalidate = 0;
 
 import { auth0 } from '@/lib/auth0';
 import { redirect } from 'next/navigation';
-import { supabaseAWithToken } from '@/lib/supabaseA';
-import { supabaseBWithToken } from '@/lib/supabaseB';
-import { supabaseBWithToken as supabaseCWithToken } from '@/lib/supabaseC';
+import { supabaseAdminA, supabaseAdminB, supabaseAdminC } from '@/lib/supabaseAdmin';
 import { Card, CardHeader } from '@/components/Card';
 import { DataTable } from '@/components/DataTable';
 import { Badge } from '@/components/Badge';
@@ -42,10 +40,8 @@ export default async function Dashboard() {
   }
 
   const user = session.user;
-  const { token: accessToken } = await auth0.getAccessToken();
 
   // Get membership from Supabase A using service role key
-  const { supabaseAdminA } = await import('@/lib/supabaseAdmin');
   const supabaseAdmin = supabaseAdminA();
   const { data: membership } = await supabaseAdmin
     .schema('authz')
@@ -61,29 +57,32 @@ export default async function Dashboard() {
 
   const isTeacher = membership.role === 'teacher' || membership.role === 'admin';
 
-  // Fetch role-appropriate data
+  // Fetch role-appropriate data using service role keys — bypasses RLS/JWT issues
   let resources: ResourceItem[] = [];
   let curriculum: CourseItem[] = [];
 
   if (isTeacher) {
-    // Supabase C — curriculum.courses
-    const supabaseC = supabaseCWithToken(accessToken);
-    const { data } = await supabaseC
+    // Supabase C — curriculum.courses, filtered by school
+    const supabaseC = supabaseAdminC();
+    const { data, error } = await supabaseC
       .schema('curriculum')
       .from('courses')
       .select('id, title, grade, school_id, member_state_id, created_at')
       .order('id', { ascending: true });
+
+    if (error) console.error('Supabase C error:', error);
     curriculum = data ?? [];
-  } else {
-    // Supabase B — resources.items
-    const supabaseB = supabaseBWithToken(accessToken);
-    const { data } = await supabaseB
-      .schema('resources')
-      .from('items')
-      .select('id, title, resource_type, grade, school_id, member_state_id, created_at')
-      .order('id', { ascending: true });
-    resources = data ?? [];
-  }
+} else {
+  const supabaseB = supabaseAdminB();
+  const { data, error } = await supabaseB
+    .schema('resources')           
+    .from('items')
+    .select('id, title, resource_type, grade, school_id, member_state_id, created_at')
+    .order('id', { ascending: true });
+
+  if (error) console.error('Supabase B error:', error);
+  resources = data ?? [];
+}
 
   const resourceColumns = [
     { key: 'id', header: 'ID', className: 'w-16' },
@@ -109,15 +108,6 @@ export default async function Dashboard() {
       key: 'created_at',
       header: 'Added',
       render: (item: CourseItem) => new Date(item.created_at).toLocaleDateString(),
-    },
-    {
-      key: 'actions',
-      header: '',
-      render: () => (
-        <Button variant="outline" size="sm">
-          View
-        </Button>
-      ),
     },
   ];
 
