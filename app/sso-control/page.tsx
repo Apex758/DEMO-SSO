@@ -18,9 +18,7 @@ interface Membership {
   school_id: string;
   member_state_id: string;
   grades_csv: string;
-  requested_at: string;
-  approved_at: string | null;
-  updated_at: string;
+  created_at: string;
 }
 
 type Tab = 'approved' | 'pending';
@@ -57,10 +55,11 @@ export default function SSOControlPage() {
     fetchMemberships();
   }, [fetchMemberships]);
 
+
   const handleAction = async (id: string, status: 'approved' | 'denied', role?: string) => {
     setActionLoading(id);
     try {
-      const res = await fetch(`/api/sso/memberships/${id}`, {
+      const res = await fetch(`/api/sso/memberships/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, ...(role ? { role } : {}) }),
@@ -88,10 +87,9 @@ export default function SSOControlPage() {
     { key: 'member_state_id', header: 'State' },
     { key: 'grades_csv', header: 'Grades' },
     {
-      key: 'approved_at',
+      key: 'created_at',
       header: 'Approved',
-      render: (item: Membership) =>
-        item.approved_at ? new Date(item.approved_at).toLocaleDateString() : '—',
+      render: (item: Membership) => new Date(item.created_at).toLocaleDateString(),
     },
     {
       key: 'actions',
@@ -101,8 +99,8 @@ export default function SSOControlPage() {
           <Button
             variant="danger"
             size="sm"
-            disabled={actionLoading === item.id}
-            onClick={() => handleAction(item.id, 'denied')}
+            disabled={actionLoading === item.auth0_sub}
+            onClick={() => handleAction(item.auth0_sub, 'suspended')}
           >
             Suspend
           </Button>
@@ -115,9 +113,9 @@ export default function SSOControlPage() {
     { key: 'full_name', header: 'Name' },
     { key: 'email', header: 'Email' },
     {
-      key: 'requested_at',
+      key: 'created_at',
       header: 'Requested',
-      render: (item: Membership) => new Date(item.requested_at).toLocaleDateString(),
+      render: (item: Membership) => new Date(item.created_at).toLocaleDateString(),
     },
     {
       key: 'actions',
@@ -125,15 +123,15 @@ export default function SSOControlPage() {
       render: (item: Membership) => (
         <div className="flex gap-2">
           <ApproveWithRole
-            id={item.id}
-            loading={actionLoading === item.id}
-            onApprove={(role) => handleAction(item.id, 'approved', role)}
+            id={item.auth0_sub}
+            loading={actionLoading === item.auth0_sub}
+            onApprove={(role) => handleAction(item.auth0_sub, 'approved', role)}
           />
           <Button
             variant="danger"
             size="sm"
-            disabled={actionLoading === item.id}
-            onClick={() => handleAction(item.id, 'denied')}
+            disabled={actionLoading === item.auth0_sub}
+            onClick={() => handleAction(item.auth0_sub, 'denied')}
           >
             Deny
           </Button>

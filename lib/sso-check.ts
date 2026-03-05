@@ -9,12 +9,10 @@ export interface Membership {
   full_name: string;
   role: 'student' | 'teacher' | 'admin';
   status: 'pending' | 'approved' | 'denied' | 'suspended';
-  school_id: string;
-  member_state_id: string;
-  grades_csv: string;
-  requested_at: string;
-  approved_at: string | null;
-  updated_at: string;
+  school_id: string | null;
+  member_state_id: string | null;
+  grades_csv: string | null;
+  created_at: string;
 }
 
 export interface RosterEntry {
@@ -36,10 +34,6 @@ export type SSOCheckResult =
   | { status: 'suspended'; membership: Membership }
   | { status: 'not_found' };
 
-/**
- * Checks SSO membership for a user. Returns their membership status.
- * Uses the service role key (server-side only) to avoid Auth0 JWE token issues.
- */
 export async function checkSSOAccess(
   auth0Sub: string,
   email: string,
@@ -47,7 +41,7 @@ export async function checkSSOAccess(
 ): Promise<SSOCheckResult> {
   const supabase = supabaseAdminA();
 
-  // Step 1: Check memberships by auth0_sub
+  // Step 1: Check existing membership by auth0_sub
   const { data: existing } = await supabase
     .schema('authz')
     .from('memberships')
@@ -59,7 +53,7 @@ export async function checkSSOAccess(
     return { status: existing.status, membership: existing };
   }
 
-  // Step 2: Check roster_entries by email (only active entries)
+  // Step 2: Check roster for auto-approval
   const { data: rosterEntry } = await supabase
     .schema('authz')
     .from('roster_entries')
@@ -69,7 +63,6 @@ export async function checkSSOAccess(
     .single();
 
   if (rosterEntry) {
-    const now = new Date().toISOString();
     const { data: newMembership, error } = await supabase
       .schema('authz')
       .from('memberships')
@@ -81,10 +74,7 @@ export async function checkSSOAccess(
         status: 'approved',
         school_id: rosterEntry.school_id,
         member_state_id: rosterEntry.member_state_id,
-        grades_csv: rosterEntry.grades_csv ?? '',
-        requested_at: now,
-        approved_at: now,
-        updated_at: now,
+        grades_csv: rosterEntry.grades_csv ?? null,
       })
       .select('*')
       .single();
@@ -97,9 +87,19 @@ export async function checkSSOAccess(
     return { status: 'approved', membership: newMembership };
   }
 
-  // Step 3: No roster match — create pending membership
-  const now = new Date().toISOString();
-  const { data: pendingMembership, error } = await supabase
+  // Step 3: No roster match — return not_found so page can prompt user to request
+  return { status: 'not_found' };
+}
+
+// Separate function to explicitly create a pending membership request
+export async function createPendingMembership(
+  auth0Sub: string,
+  email: string,
+  name: string
+): Promise<Membership | null> {
+  const supabase = supabaseAdminA();
+
+  const { data, error } = await supabase
     .schema('authz')
     .from('memberships')
     .insert({
@@ -108,20 +108,17 @@ export async function checkSSOAccess(
       full_name: name,
       role: 'student',
       status: 'pending',
-      school_id: '',
-      member_state_id: '',
-      grades_csv: '',
-      requested_at: now,
-      approved_at: null,
-      updated_at: now,
+      school_id: null,
+      member_state_id: null,
+      grades_csv: null,
     })
     .select('*')
     .single();
 
-  if (error || !pendingMembership) {
+  if (error || !data) {
     console.error('Failed to create pending membership:', error);
-    return { status: 'not_found' };
+    return null;
   }
 
-  return { status: 'pending', membership: pendingMembership };
+  return data;
 }
